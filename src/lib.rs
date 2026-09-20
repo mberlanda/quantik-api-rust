@@ -19,8 +19,13 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 pub const API_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const CORE_REVISION: &str = "2b35565dddc8e0f77222af2f8fcd382b013f2fee";
-pub const REQUEST_SCHEMA: &str = "quantik.engine-request.v1";
-pub const RESPONSE_SCHEMA: &str = "quantik.engine-response.v1";
+pub const REQUEST_SCHEMA: &str = "engine-request.v1";
+pub const RESPONSE_SCHEMA: &str = "engine-response.v1";
+/// Pre-registration spelling of the request schema, still accepted on input
+/// (QW-019 decisions.md#D3). Never emitted. Removed at the next minor release:
+/// deleting this const, its branch in `validate_request`, and its test is the
+/// whole change.
+pub const REQUEST_SCHEMA_LEGACY: &str = "quantik.engine-request.v1";
 
 pub fn app() -> Router {
     Router::new()
@@ -115,7 +120,7 @@ async fn choose_move(
 }
 
 fn validate_request(request: &MoveRequest) -> Result<(), ApiError> {
-    if request.schema != REQUEST_SCHEMA {
+    if request.schema != REQUEST_SCHEMA && request.schema != REQUEST_SCHEMA_LEGACY {
         return Err(ApiError::bad_request(format!(
             "schema must be {REQUEST_SCHEMA}"
         )));
@@ -340,6 +345,108 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(json_response(response).await["action_index"], 51);
+    }
+
+    const OPENING_QFEN: &str = "AbC./..../..../....";
+
+    async fn post_move(schema: &str) -> Response {
+        let legal = generate_legal_moves(&State::from_qfen(OPENING_QFEN).unwrap().bb)
+            .iter()
+            .map(action_index)
+            .collect::<Vec<_>>();
+        let request = json!({
+            "schema": schema,
+            "qfen": OPENING_QFEN,
+            "side_to_move": 1,
+            "legal_action_indices": legal,
+            "config": { "max_depth": 2, "seed": 7 }
+        });
+        app()
+            .oneshot(
+                Request::post("/v1/move/minimax")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(request.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn legacy_request_schema_is_still_accepted() {
+        let response = post_move(REQUEST_SCHEMA_LEGACY).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn unknown_request_schema_version_is_rejected() {
+        let response = post_move("engine-request.v2").await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let error = json_response(response).await["error"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(error.contains(REQUEST_SCHEMA));
+        assert!(!error.contains(REQUEST_SCHEMA_LEGACY));
+    }
+
+    #[tokio::test]
+    async fn response_carries_the_bare_registered_schema_name() {
+        // Even a legacy-spelled request is answered with the bare name.
+        let response = post_move(REQUEST_SCHEMA_LEGACY).await;
+        assert_eq!(
+            json_response(response).await["schema"],
+            "engine-response.v1"
+        );
+    }
+
+    #[tokio::test]
+    async fn response_validates_against_the_registered_schema() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../quantik-core-contracts/schemas/engine-response-v1.json"
+        );
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(_) if std::env::var("QUANTIK_SKIP_CONTRACT_TESTS").as_deref() == Ok("1") => {
+                eprintln!("SKIPPED: {path} not found and QUANTIK_SKIP_CONTRACT_TESTS=1");
+                return;
+            }
+            Err(error) => panic!(
+                "{path} not readable ({error}); check out quantik-core-contracts as a sibling, \
+                 or set QUANTIK_SKIP_CONTRACT_TESTS=1 to skip this test"
+            ),
+        };
+        let schema: Value = serde_json::from_str(&text).unwrap();
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        for engine in ["minimax", "mcts", "beam"] {
+            let legal = generate_legal_moves(&State::from_qfen(OPENING_QFEN).unwrap().bb)
+                .iter()
+                .map(action_index)
+                .collect::<Vec<_>>();
+            let request = json!({
+                "schema": REQUEST_SCHEMA,
+                "qfen": OPENING_QFEN,
+                "side_to_move": 1,
+                "legal_action_indices": legal,
+                "config": { "max_depth": 2, "iterations": 50, "beam_width": 4, "seed": 7 }
+            });
+            let response = app()
+                .oneshot(
+                    Request::post(format!("/v1/move/{engine}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(request.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{engine}");
+            let body = json_response(response).await;
+            assert!(
+                validator.is_valid(&body),
+                "{engine} response violates engine-response-v1.json: {body}"
+            );
+        }
     }
 
     #[tokio::test]
