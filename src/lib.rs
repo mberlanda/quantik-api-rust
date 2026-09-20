@@ -116,6 +116,9 @@ pub enum Score {
     Value(f64),
 }
 
+/// Score units this gateway actually produces. The registered v2 schema also
+/// allows `logit` and `prior`, which no engine here emits; this enum is
+/// NOT a general v2 reader and must not be used to parse responses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Unit {
@@ -792,6 +795,40 @@ mod tests {
             assert!(validator.is_valid(&body), "{body}");
         }
         assert_contract_extras("minimax", QUIET_QFEN, &body);
+    }
+
+    /// Squashed values only reach exactly +-1 for proven results, so a deep
+    /// heuristic search must stay strictly inside; a core change to that
+    /// scale breaks this test instead of the contract.
+    #[tokio::test]
+    async fn a_deep_but_unproven_search_stays_inside_the_open_interval() {
+        for depth in [3, 4] {
+            let config = json!({ "max_depth": depth, "seed": 7 });
+            let body = move_body("minimax", "..../..../..../....", config).await;
+            assert!(body["value"].as_f64().unwrap().abs() < 1.0, "{body}");
+            assert_eq!(body["certainty"], "estimate", "depth {depth}: {body}");
+            for c in body["candidates"].as_array().unwrap() {
+                assert!(c["score"].as_f64().unwrap().abs() < 1.0, "{body}");
+            }
+        }
+    }
+
+    /// Late-game position where a depth-16 search finishes at once: the
+    /// `solved` path. Every score is a proven terminal, exactly +-1.
+    #[tokio::test]
+    async fn a_depth_16_solve_is_a_proof_with_every_score_exactly_one() {
+        let qfen = "Ca.D/.dC./...D/.bbA";
+        let body = move_body("minimax", qfen, json!({ "max_depth": 16, "seed": 7 })).await;
+        assert_eq!(body["certainty"], "proof", "{body}");
+        let candidates = body["candidates"].as_array().unwrap();
+        assert!(!candidates.is_empty());
+        for c in candidates {
+            assert_eq!(c["score"].as_f64().unwrap().abs(), 1.0, "{body}");
+        }
+        if let Some(validator) = v2_validator() {
+            assert!(validator.is_valid(&body), "{body}");
+        }
+        assert_contract_extras("minimax", qfen, &body);
     }
 
     #[test]
