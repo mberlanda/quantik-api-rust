@@ -19,8 +19,20 @@ const DEFAULT_IMAGE: &str = "quantik-api:dev";
 const OPENING_QFEN: &str = "AbC./..../..../....";
 const SIDE_TO_MOVE: u8 = 1;
 
-fn image() -> String {
-    std::env::var("QUANTIK_API_IMAGE").unwrap_or_else(|_| DEFAULT_IMAGE.to_owned())
+/// The image under test, and whether it was chosen explicitly (explicit means it must exist).
+fn image() -> (String, bool) {
+    match std::env::var("QUANTIK_API_IMAGE") {
+        Ok(image) => (image, true),
+        Err(_) => (DEFAULT_IMAGE.to_owned(), false),
+    }
+}
+
+fn image_present(image: &str) -> bool {
+    Command::new("docker")
+        .args(["image", "inspect", image])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
 }
 
 fn docker_available() -> bool {
@@ -50,11 +62,19 @@ impl Container {
         );
         let id = String::from_utf8_lossy(&out.stdout).trim().to_owned();
         let mut container = Container { id, port: 0 };
-        let mapping = Command::new("docker")
-            .args(["port", &container.id, "8080/tcp"])
-            .output()
-            .expect("failed to run docker port");
-        let text = String::from_utf8_lossy(&mapping.stdout);
+        // The port mapping can lag `docker run -d` by a moment; retry briefly.
+        let mut text = String::new();
+        for _ in 0..25 {
+            let mapping = Command::new("docker")
+                .args(["port", &container.id, "8080/tcp"])
+                .output()
+                .expect("failed to run docker port");
+            text = String::from_utf8_lossy(&mapping.stdout).into_owned();
+            if !text.trim().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
         container.port = text
             .lines()
             .next()
@@ -172,7 +192,13 @@ fn every_advertised_engine_returns_a_legal_move() {
         eprintln!("SKIPPED: docker is unavailable; container smoke test not run");
         return;
     }
-    let image = image();
+    let (image, explicit) = image();
+    if !image_present(&image) {
+        let message = format!("image {image} not built; run `docker build -t {image} .`");
+        assert!(!explicit, "QUANTIK_API_IMAGE is set but {message}");
+        eprintln!("SKIPPED: {message}");
+        return;
+    }
     let container = Container::start(&image);
     container.wait_healthy();
 
