@@ -1,13 +1,11 @@
 # Which container is the public deployment
 
-Status: **decision paper, recommendations not yet accepted.** QW-020 criterion 4 asks for a
-recorded answer; this file records the question, the options, and a recommendation for each
-decision. Once the owner accepts or amends a recommendation, change the marker on that decision
-from `RECOMMENDED` to `DECIDED` and keep the rejected alternatives.
+Status: **decided 2026-09-20.** The owner accepted all five recommendations as written. QW-020
+criterion 4 asks for a recorded answer; this file records each question, the options considered,
+and the rejected alternatives, which are kept so the decision can be reopened with its reasoning.
 
 Home: this file rather than `README.md`, because the README documents how to run the service and
-this documents where it does and does not run in public. The README should link here (a one-line
-follow-up, kept out of this change).
+this documents where it does and does not run in public. The README link is a follow-up below.
 
 Two images exist or will exist:
 
@@ -20,16 +18,16 @@ Two images exist or will exist:
 Evidence citations are `path:line`. Paths without a repository prefix are in `quantik-api-rust` at
 `1764987` (origin/main); other repositories are cited at their working tree on 2026-09-20.
 
-## Decisions needed
+## Decisions
 
-1. **Which image is the public deployment?** RECOMMENDED: the Python play container only.
-2. **What is the Rust image then?** RECOMMENDED: a published distribution artifact for
+1. **Which image is the public deployment?** DECIDED 2026-09-20: the Python play container only.
+2. **What is the Rust image then?** DECIDED 2026-09-20: a published distribution artifact for
    self-hosting the classical engines, explicitly not a public deployment.
-3. **Which endpoint does the visualizer point at by default?** RECOMMENDED: same origin as the page,
+3. **Which endpoint does the visualizer point at by default?** DECIDED 2026-09-20: same origin as the page,
    i.e. the play container; no default for a Remote seat.
-4. **Where is a bug report filed?** RECOMMENDED: one owner per symptom, routed as below, with
+4. **Where is a bug report filed?** DECIDED 2026-09-20: one owner per symptom, routed as below, with
    `quantik-models-py` owning anything seen on the public URL.
-5. **What must change before the Rust image may ever be exposed publicly?** RECOMMENDED: name the
+5. **What must change before the Rust image may ever be exposed publicly?** DECIDED 2026-09-20: name the
    preconditions now, do not meet them now.
 
 ## Decision 1: which image is the public deployment
@@ -57,7 +55,7 @@ What the evidence says:
 
 Options:
 
-- **A. Python play container only. RECOMMENDED.** One URL, one owner, the whole product visible.
+- **A. Python play container only. DECIDED 2026-09-20.** One URL, one owner, the whole product visible.
   Cost: the image is ~498 MB (`quantik-models-py/docs/play-service.md:326-328`) against 10.7 MB for
   the Rust image (`QW-020/status.md`, W1 entry), and it carries CC-BY-NC-4.0 weights, so the public
   deployment inherits a non-commercial constraint (`play-service.md:366-368`). ADR 0012's direction
@@ -82,7 +80,7 @@ the ADR's "public deployment" refers to.
 
 Options:
 
-- **A. A distribution artifact for self-hosters and for the smoke test. RECOMMENDED.** Keep
+- **A. A distribution artifact for self-hosters and for the smoke test. DECIDED 2026-09-20.** Keep
   publishing to GHCR (`.github/workflows/publish-image.yml`: a `vX.Y.Z` tag pushes
   `quantik-api:X.Y.Z`, `latest` deliberately not pushed, `:31-32`). Its purpose: a small,
   dependency-free classical-engine gateway, a container for the visualizer's Remote mode
@@ -109,7 +107,7 @@ neither service's real routes.
 Options:
 
 - **A. Default is same origin, meaning the play container when it serves the page; Remote seats stay
-  opt-in and empty. RECOMMENDED.** This is what the code does today, so recording it costs nothing.
+  opt-in and empty. DECIDED 2026-09-20.** This is what the code does today, so recording it costs nothing.
   The public URL needs no configuration and nobody is sent to the Rust image by default. The Rust
   image is reached only by pasting `http://<host>:<port>/v1/move/mcts` into a Remote seat
   (`README.md:30-34`).
@@ -138,7 +136,7 @@ The rule: the artifact that produced the behaviour owns the bug, and the public 
 
 Options:
 
-- **A. The routing above. RECOMMENDED.** One paragraph per README; there is always a single default
+- **A. The routing above. DECIDED 2026-09-20.** One paragraph per README; there is always a single default
   owner.
 - **B. Everything to `quantik-workspace`.** One inbox, but it is the control plane rather than a
   product repository and would become a pass-through.
@@ -156,9 +154,23 @@ Not proposed for now. Writing it down keeps decision 1 from being reopened by ac
 - `CORE_REV` must stay in sync with `CORE_REVISION` (`Dockerfile:13`, `src/lib.rs:21`).
 - A named owner, and a reason a visitor would use it instead of the play container.
 
-Options: **A.** record these preconditions and change nothing (RECOMMENDED); **B.** change the CORS
+Options: **A.** record these preconditions and change nothing (DECIDED 2026-09-20); **B.** change the CORS
 default now (rejected: outside `allowed_paths` and a code change in a docs PR); **C.** say nothing
 (rejected: the README warning would be the only guard).
+
+## Follow-ups
+
+Not done in this change, which touches only this file:
+
+- Link this file from `README.md`, and describe the image there as a "self-hosted classical-engine
+  gateway", not a public deployment (decision 2).
+- Reconcile the port mismatch: binary default 8000 (`src/main.rs:13`, `README.md:19`), image 8080
+  (`Dockerfile:27-28`), play container 8000.
+- In `quantik-qfen-visualizer`: fix the Remote placeholders, which match neither service's routes
+  (decision 3, option C).
+- Rust-public preconditions (decision 5): restrict CORS, get CI running with a linux/amd64 build,
+  keep `CORE_REV` in sync with `CORE_REVISION`, name an owner. Reopen decision 1 only if these are
+  met and a visitor reason exists, or if Rust gains model serving.
 
 ## Documents reconciled against
 
