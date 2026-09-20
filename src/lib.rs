@@ -401,6 +401,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn response_validates_against_the_registered_schema() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../quantik-core-contracts/schemas/engine-response-v1.json"
+        );
+        let Ok(text) = std::fs::read_to_string(path) else {
+            eprintln!("SKIPPED: {path} not found; standalone checkout has no contracts sibling");
+            return;
+        };
+        let schema: Value = serde_json::from_str(&text).unwrap();
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        for engine in ["minimax", "mcts", "beam"] {
+            let legal = generate_legal_moves(&State::from_qfen(OPENING_QFEN).unwrap().bb)
+                .iter()
+                .map(action_index)
+                .collect::<Vec<_>>();
+            let request = json!({
+                "schema": REQUEST_SCHEMA,
+                "qfen": OPENING_QFEN,
+                "side_to_move": 1,
+                "legal_action_indices": legal,
+                "config": { "max_depth": 2, "iterations": 50, "beam_width": 4, "seed": 7 }
+            });
+            let response = app()
+                .oneshot(
+                    Request::post(format!("/v1/move/{engine}"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(request.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{engine}");
+            let body = json_response(response).await;
+            assert!(
+                validator.is_valid(&body),
+                "{engine} response violates engine-response-v1.json: {body}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn request_legality_must_match_core() {
         let request = json!({
             "schema": REQUEST_SCHEMA,
