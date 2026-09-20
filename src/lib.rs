@@ -406,9 +406,16 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../quantik-core-contracts/schemas/engine-response-v1.json"
         );
-        let Ok(text) = std::fs::read_to_string(path) else {
-            eprintln!("SKIPPED: {path} not found; standalone checkout has no contracts sibling");
-            return;
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(_) if std::env::var("QUANTIK_SKIP_CONTRACT_TESTS").as_deref() == Ok("1") => {
+                eprintln!("SKIPPED: {path} not found and QUANTIK_SKIP_CONTRACT_TESTS=1");
+                return;
+            }
+            Err(error) => panic!(
+                "{path} not readable ({error}); check out quantik-core-contracts as a sibling, \
+                 or set QUANTIK_SKIP_CONTRACT_TESTS=1 to skip this test"
+            ),
         };
         let schema: Value = serde_json::from_str(&text).unwrap();
         let validator = jsonschema::validator_for(&schema).unwrap();
